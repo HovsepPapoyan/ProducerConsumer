@@ -9,8 +9,8 @@
  *
  */
 
-#ifndef THREADSAFE_ADAPTER_H
-#define THREADSAFE_ADAPTER_H
+#ifndef THREADSAFE_STL_ADAPTER_H
+#define THREADSAFE_STL_ADAPTER_H
 
 #include <algorithm>
 #include <condition_variable>
