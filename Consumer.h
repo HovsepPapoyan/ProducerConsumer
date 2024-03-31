@@ -1,7 +1,7 @@
 /**
  * @file Consumer.h
  *
- * @brief Consumer class for popping elements from shared thread-safe container
+ * @brief Consumer class for popping elements from shared thread-safe container.
  *
  * @author Hovsep Papoyan
  * Contact: papoyanhovsep93@gmail.com
@@ -14,61 +14,58 @@
 
 #include "ProducerConsumerBase.h"
 
-namespace concurrency
+namespace mt
 {
-
-template<typename Adapter, typename Callable>
-class Consumer : public ProducerConsumerBase<Adapter>
-{
-private:
-    using Super = ProducerConsumerBase<Adapter>;
-    using Elem = typename Adapter::Elem;
-
-    Callable m_callable;
-
-public:
-    explicit Consumer(Adapter& sharedContainer, Callable callable);
-    ~Consumer() override;
-
-private:
-    void workerThreadWork() override;
-};
-
-template<typename Adapter, typename Callable>
-Consumer<Adapter, Callable>::Consumer(Adapter& sharedContainer, Callable callable)
-    : Super(Super::Type::Consumer, sharedContainer)
-    , m_callable(std::move(callable))
-{
-    this->runMainThread();
-}
-
-template<typename Adapter, typename Callable>
-Consumer<Adapter, Callable>::~Consumer()
-{
-    this->shutdownMainThread();
-}
-
-template<typename Adapter, typename Callable>
-void Consumer<Adapter, Callable>::workerThreadWork()
-{
-    while (true)
+    template<typename Adapter, typename Callable>
+    class Consumer : public ProducerConsumerBase<Adapter>
     {
-        Elem item;
-        std::unique_lock<std::mutex> lock(this->m_workerThreadMutex);
-        this->m_isWorkerThreadRunning = true;
-        this->m_workerThreadCondVar.wait(lock, [&] { return !this->m_workerThreadEnabled ? true : this->m_sharedContainer.tryPop(item); });
-        if (!this->m_workerThreadEnabled)
-        {
-            this->m_isWorkerThreadRunning = false;
-            break;
-        }
-        #ifdef DEBUG
-        std::cout << this->m_name << " -> " << item << std::endl;
-        #endif
-        m_callable(std::move_if_noexcept(item));
-    }
-}
+    private:
+        using Super = ProducerConsumerBase<Adapter>;
+        using Elem = typename Adapter::Elem;
 
-} // namespace concurrency
+        Callable m_callable;
+
+    public:
+        explicit Consumer(Adapter& sharedContainer, Callable callable);
+        Consumer(const Consumer&) = default;
+        Consumer(Consumer&&) = default;
+        Consumer& operator=(const Consumer&) = default;
+        Consumer& operator=(Consumer&) = default;
+        ~Consumer() override;
+
+    private:
+        void workerThreadWork() override;
+    };
+
+    template<typename Adapter, typename Callable>
+    Consumer<Adapter, Callable>::Consumer(Adapter& sharedContainer, Callable callable)
+        : Super(Super::Type::Consumer, sharedContainer)
+        , m_callable(std::move(callable))
+    {
+        this->runMainThread();
+    }
+
+    template<typename Adapter, typename Callable>
+    Consumer<Adapter, Callable>::~Consumer()
+    {
+        this->shutdownMainThread();
+    }
+
+    template<typename Adapter, typename Callable>
+    void Consumer<Adapter, Callable>::workerThreadWork()
+    {
+        while (this->m_workerThreadEnabled)
+        {
+            if (Elem item; this->m_sharedContainer.tryPop(item))
+            {
+                m_callable(std::move_if_noexcept(item));
+            }
+            else
+            {
+                std::this_thread::yield();
+            }
+        }
+    }
+} // namespace mt
 
 #endif

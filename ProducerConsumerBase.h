@@ -1,7 +1,7 @@
 /**
  * @file ProducerConsumerBase.h
  *
- * @brief ProducerConsumerBase base class for Producer and Consumer
+ * @brief ProducerConsumerBase base class for Producer and Consumer.
  *
  * @author Hovsep Papoyan
  * Contact: papoyanhovsep93@gmail.com
@@ -12,228 +12,184 @@
 #ifndef PRODUCER_CONSUMER_BASE_H
 #define PRODUCER_CONSUMER_BASE_H
 
-#include "ThreadsafeSTLAdapter.h"
+#include "ThreadSafeSTLAdapter.h"
 
 #include <iostream>
 #include <queue>
-#include <string_view>
-#include <thread>
 
-namespace concurrency
+namespace mt
 {
-
-template<typename Adapter>
-class ProducerConsumerBase
-{
-protected:
-    static constexpr std::string_view Names[] = { "PRODUCER", "CONSUMER" };
-    enum class Command : unsigned char
+    template<typename Adapter>
+    class ProducerConsumerBase
     {
-        EnableWorkerThread,
-        DisableWorkerThread,
-        ShutdownMainThread
+    protected:
+        static constexpr std::string_view Names[] = { "PRODUCER", "CONSUMER" };
+        enum class Command : unsigned char
+        {
+            EnableWorkerThread,
+            DisableWorkerThread,
+            ShutdownMainThread
+        };
+        enum class Type : unsigned char
+        {
+            Producer,
+            Consumer
+        };
+
+    private:
+        decltype(createThreadSafeSTLAdapterFrom(std::queue<Command>{})) m_commandQueue;
+        std::unique_ptr<std::jthread> m_mainThread;
+
+    protected:
+        Adapter& m_sharedContainer;
+        std::unique_ptr<std::jthread> m_workerThread;
+        std::mutex m_workerThreadMutex;
+        std::atomic<bool> m_workerThreadEnabled;
+        std::string_view m_name;
+
+    public:
+        explicit ProducerConsumerBase(const Type type, Adapter& sharedContainer);
+        ProducerConsumerBase(const ProducerConsumerBase&) = default;
+        ProducerConsumerBase(ProducerConsumerBase&&) = default;
+        ProducerConsumerBase& operator=(const ProducerConsumerBase&) = default;
+        ProducerConsumerBase& operator=(ProducerConsumerBase&) = default;
+        virtual ~ProducerConsumerBase() = default;
+
+        void enableWorkerThread();
+        void disableWorkerThread();
+
+    protected:
+        void runMainThread();
+        void shutdownMainThread();
+
+    private:
+        virtual void workerThreadWork() = 0;
+        void interruptWorkerThread();
+        void mainThreadWork();
     };
-    enum class Type : unsigned char
+
+    template<typename Adapter>
+    ProducerConsumerBase<Adapter>::ProducerConsumerBase(const Type type, Adapter& sharedContainer)
+        : m_commandQueue(createThreadSafeSTLAdapterFrom(std::queue<Command>{}))
+        , m_sharedContainer(sharedContainer)
+        , m_workerThreadEnabled(false)
+        , m_name(Names[static_cast<unsigned char>(type)])
+    { }
+
+    template<typename Adapter>
+    void ProducerConsumerBase<Adapter>::enableWorkerThread()
     {
-        Producer,
-        Consumer
-    };
-
-private:
-    decltype(createThreadsafeSTLAdapterFrom(std::queue<Command>{})) m_commandQueue;
-    std::unique_ptr<std::thread> m_mainThread;
-
-protected:
-    Adapter& m_sharedContainer;
-    std::unique_ptr<std::thread> m_workerThread;
-    std::mutex m_workerThreadMutex;
-    std::condition_variable m_workerThreadCondVar;
-    bool m_workerThreadEnabled;
-    bool m_isWorkerThreadRunning;
-    std::string_view m_name;
-
-public:
-    explicit ProducerConsumerBase(const Type type, Adapter& sharedContainer);
-    virtual ~ProducerConsumerBase() = default;
-
-    void enableWorkerThread();
-    void disableWorkerThread();
-
-protected:
-    void runMainThread();
-    void shutdownMainThread();
-
-private:
-    virtual void workerThreadWork() = 0;
-    void disableWorkerThreadIfEnabled();
-    void mainThreadWork();
-};
-
-template<typename Adapter>
-ProducerConsumerBase<Adapter>::ProducerConsumerBase(const Type type, Adapter& sharedContainer)
-    : m_commandQueue(createThreadsafeSTLAdapterFrom(std::queue<Command>{}))
-    , m_sharedContainer(sharedContainer)
-    , m_workerThreadEnabled(false)
-    , m_isWorkerThreadRunning(false)
-    , m_name(Names[static_cast<unsigned char>(type)])
-{ }
-    
-template<typename Adapter>
-void ProducerConsumerBase<Adapter>::enableWorkerThread()
-{
-    #ifdef DEBUG
-    std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << std::endl;
-    #endif
-    m_commandQueue.pushAndNotify(Command::EnableWorkerThread);
-}
-
-template<typename Adapter>
-void ProducerConsumerBase<Adapter>::disableWorkerThread()
-{
-    #ifdef DEBUG
-    std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << std::endl;
-    #endif
-    m_commandQueue.pushAndNotify(Command::DisableWorkerThread);
-}
-
-template<typename Adapter>
-void ProducerConsumerBase<Adapter>::runMainThread()
-{
-    try
-    {
-        m_mainThread = std::make_unique<std::thread>([&]{ mainThreadWork(); });
+        m_commandQueue.pushAndNotify(Command::EnableWorkerThread);
     }
-    catch (const std::exception& ex)
-    {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> " << ex.what() << std::endl;
-        #endif
-    }
-    catch (...)
-    {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> Unknown exception" << std::endl;
-        #endif
-    }
-}
 
-template<typename Adapter>
-void ProducerConsumerBase<Adapter>::shutdownMainThread()
-{
-    try
+    template<typename Adapter>
+    void ProducerConsumerBase<Adapter>::disableWorkerThread()
     {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << std::endl;
-        #endif
-        m_commandQueue.pushAndNotify(Command::ShutdownMainThread);
+        m_commandQueue.pushAndNotify(Command::DisableWorkerThread);
     }
-    catch (const std::exception& ex)
-    {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> " << ex.what() << std::endl;
-        #endif
-    }
-    catch (...)
-    {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> Unknown exception" << std::endl;
-        #endif
-    }
-    if (m_mainThread->joinable())
-    {
-        m_mainThread->join();
-    }
-}
 
-template<typename Adapter>
-void ProducerConsumerBase<Adapter>::disableWorkerThreadIfEnabled()
-{
-    std::unique_lock<std::mutex> lock(m_workerThreadMutex);
-    if (m_workerThreadEnabled)
+    template<typename Adapter>
+    void ProducerConsumerBase<Adapter>::runMainThread()
     {
-        // Disabling worker thread
+        try
+        {
+            m_mainThread = std::make_unique<std::jthread>([&] { mainThreadWork(); });
+        }
+        catch (const std::exception& ex)
+        {
+            std::cerr << m_name << " -> " << ex.what() << std::endl;
+        }
+        catch (...)
+        {
+            std::cerr << m_name << " -> Unknown exception" << std::endl;
+        }
+    }
+
+    template<typename Adapter>
+    void ProducerConsumerBase<Adapter>::shutdownMainThread()
+    {
+        try
+        {
+            m_commandQueue.pushAndNotify(Command::ShutdownMainThread);
+        }
+        catch (const std::exception& ex)
+        {
+            std::cerr << m_name << " -> " << ex.what() << std::endl;
+        }
+        catch (...)
+        {
+            std::cerr << m_name << " -> Unknown exception" << std::endl;
+        }
+        if (m_mainThread->joinable())
+        {
+            m_mainThread->join();
+        }
+    }
+
+    template<typename Adapter>
+    void ProducerConsumerBase<Adapter>::interruptWorkerThread()
+    {
+        std::lock_guard<std::mutex> lock(m_workerThreadMutex);
         m_workerThreadEnabled = false;
-        lock.unlock();
-        m_workerThreadCondVar.notify_one();
         if (m_workerThread->joinable())
         {
             m_workerThread->join();
         }
     }
-    else
-    {
-        // Nothing to disable, there is no running worker thread
-    }
-}
 
-template<typename Adapter>
-void ProducerConsumerBase<Adapter>::mainThreadWork()
-{
-    try
+    template<typename Adapter>
+    void ProducerConsumerBase<Adapter>::mainThreadWork()
     {
-        while (true)
+        try
         {
-            Command currentCommand;
-            m_commandQueue.waitAndPop(currentCommand);
+            while (true)
+            {
+                Command currentCommand;
+                m_commandQueue.waitAndPop(currentCommand);
 
-            if (currentCommand == Command::EnableWorkerThread)
-            {
-                std::unique_lock<std::mutex> lock(m_workerThreadMutex);
-                if (!m_workerThreadEnabled && !m_isWorkerThreadRunning)
+                if (currentCommand == Command::EnableWorkerThread)
                 {
-                    // Enabling worker thread
-                    m_workerThreadEnabled = true;
-                    lock.unlock();
-                    m_workerThread = std::make_unique<std::thread>([&]
+                    if (!m_workerThreadEnabled)
                     {
-                        try
-                        {
-                            workerThreadWork();
-                        }
-                        catch (const std::exception& ex)
-                        {
-                            #ifdef DEBUG
-                            std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> " << ex.what() << std::endl;
-                            #endif
-                        }
-                        catch (...)
-                        {
-                            #ifdef DEBUG
-                            std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> Unknown exception" << std::endl;
-                            #endif
-                        }
-                    });
+                        std::lock_guard<std::mutex> lock(m_workerThreadMutex);
+                        m_workerThreadEnabled = true;
+                        m_workerThread = std::make_unique<std::jthread>([&]
+                            {
+                                try
+                                {
+                                    workerThreadWork();
+                                }
+                                catch (const std::exception& ex)
+                                {
+                                    std::cerr << m_name << " -> " << ex.what() << std::endl;
+                                }
+                                catch (...)
+                                {
+                                    std::cerr << m_name << " -> Unknown exception" << std::endl;
+                                }
+                            });
+                    }
                 }
-                else
+                else if (currentCommand == Command::DisableWorkerThread)
                 {
-                    // Nothing to enable, worker thread already enabled
+                    interruptWorkerThread();
                 }
-            }
-            else if (currentCommand == Command::DisableWorkerThread)
-            {
-                disableWorkerThreadIfEnabled();
-            }
-            else if (currentCommand == Command::ShutdownMainThread)
-            {
-                disableWorkerThreadIfEnabled();
-                break;
+                else if (currentCommand == Command::ShutdownMainThread)
+                {
+                    interruptWorkerThread();
+                    break;
+                }
             }
         }
+        catch (const std::exception& ex)
+        {
+            std::cerr << m_name << " -> " << ex.what() << std::endl;
+        }
+        catch (...)
+        {
+            std::cerr << m_name << " -> Unknown exception" << std::endl;
+        }
     }
-    catch (const std::exception& ex)
-    {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> " << ex.what() << std::endl;
-        #endif
-    }
-    catch (...)
-    {
-        #ifdef DEBUG
-        std::cout << m_name << " -> " << __PRETTY_FUNCTION__ << " -> Unknown exception" << std::endl;
-        #endif
-    }
-}
-
-} // namespace concurrency
+} // namespace mt
 
 #endif

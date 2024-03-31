@@ -1,7 +1,7 @@
 /**
- * @file ThreadsafeSTLAdapter.h
+ * @file ThreadSafeSTLAdapter.h
  *
- * @brief ThreadsafeSTLAdapter class for creating thread-safe variants of STL adapters
+ * @brief ThreadSafeSTLAdapter class for creating thread-safe (lock-based) variants of STL adapters.
  *
  * @author Hovsep Papoyan
  * Contact: papoyanhovsep93@gmail.com
@@ -9,386 +9,398 @@
  *
  */
 
-#ifndef THREADSAFE_STL_ADAPTER_H
-#define THREADSAFE_STL_ADAPTER_H
+#ifndef THREAD_SAFE_STL_ADAPTER_H
+#define THREAD_SAFE_STL_ADAPTER_H
 
 #include <algorithm>
 #include <condition_variable>
-#include <mutex>
+#include <iterator>
 
-namespace concurrency
+namespace mt
 {
-
-struct EmptyAdapter : std::exception
-{
-    const char* what() const noexcept override { return "Exception: The adapter is empty"; }
-};
-
-template<typename Adapter>
-constexpr auto detectTopMethodImpl(const Adapter* const p) noexcept -> decltype(p->top(), void(), true) { return true; }
-
-constexpr bool detectTopMethodImpl(const void* const p) noexcept { return false; }
-
-template<typename Adapter>
-constexpr bool detectTopMethod() noexcept { return detectTopMethodImpl(static_cast<const Adapter* const>(nullptr)); }
-
-template<typename Adapter>
-auto& getCurrent(const Adapter& adapter)
-{
-    if constexpr (detectTopMethod<Adapter>())
+    struct EmptyAdapter : std::exception
     {
-        return adapter.top();
+        [[nodiscard]] const char* what() const noexcept override { return "Exception: The adapter is empty"; }
+    };
+
+    template<typename Adapter>
+    [[nodiscard]] constexpr auto detectTopMethodImpl(const Adapter* const p) noexcept -> decltype(p->top(), void(), true) { return true; }
+
+    [[nodiscard]] constexpr bool detectTopMethodImpl(const void* const p) noexcept { return false; }
+
+    template<typename Adapter>
+    [[nodiscard]] constexpr bool detectTopMethod() noexcept { return detectTopMethodImpl(static_cast<const Adapter* const>(nullptr)); }
+
+    template<typename Adapter>
+    [[nodiscard]] auto& getCurrent(const Adapter& adapter)
+    {
+        if constexpr (detectTopMethod<Adapter>())
+        {
+            return adapter.top();
+        }
+        else
+        {
+            return adapter.front();
+        }
     }
-    else
+
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    class ThreadSafeSTLAdapter;
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    void swap(ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& lhs,
+        ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& rhs)
     {
-        return adapter.front();
+        lhs.swap(rhs);
     }
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-class ThreadsafeSTLAdapter;
-
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-void swap(ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& lhs,
-          ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& rhs)
-{
-    if (&lhs != &rhs)
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    class ThreadSafeSTLAdapter
     {
-        std::scoped_lock lock(lhs.m_mutex, rhs.m_mutex);
-        std::swap(lhs.m_adapter, rhs.m_adapter);
-    }
-}
+    private:
+        Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...> m_adapter;
+        std::mutex m_mutex;
+        std::condition_variable m_condVar;
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-class ThreadsafeSTLAdapter
-{
-private:
-    Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...> m_adapter;
-    std::mutex m_mutex;
-    std::condition_variable m_condVar;
+        explicit ThreadSafeSTLAdapter(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&& adapter);
 
-    explicit ThreadsafeSTLAdapter(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&& adapter);
+        template<template<typename...> typename Adapt_,
+            typename AdaptElem_, template<typename...> typename Cont_,
+            typename ContElem_, template<typename> typename Alloc_,
+            typename AllocElem_, typename... Ts_>
+        [[nodiscard]] friend auto createThreadSafeSTLAdapterFrom(const Adapt_<AdaptElem_, Cont_<ContElem_, Alloc_<AllocElem_>>, Ts_...>& adapter, Ts_... comparator);
 
-    template<template<typename...> typename _Adapt,
-             typename _AdaptElem, template<typename...> typename _Cont,
-                      typename _ContElem, template<typename> typename _Alloc,
-                                 typename _AllocElem, typename... _Ts>
-    friend auto createThreadsafeSTLAdapterFrom(const _Adapt<_AdaptElem, _Cont<_ContElem, _Alloc<_AllocElem>>, _Ts...>& adapter, _Ts... comparator);
-    template<template<typename...> typename _Adapt,
-             typename _AdaptElem, template<typename...> typename _Cont,
-                      typename _ContElem, template<typename> typename _Alloc,
-                                 typename _AllocElem, typename... _Ts>
-    friend auto createThreadsafeSTLAdapterFrom(_Adapt<_AdaptElem, _Cont<_ContElem, _Alloc<_AllocElem>>, _Ts...>&& adapter, _Ts... comparator);
+        template<template<typename...> typename Adapt_,
+            typename AdaptElem_, template<typename...> typename Cont_,
+            typename ContElem_, template<typename> typename Alloc_,
+            typename AllocElem_, typename... Ts_>
+        [[nodiscard]] friend auto createThreadSafeSTLAdapterFrom(Adapt_<AdaptElem_, Cont_<ContElem_, Alloc_<AllocElem_>>, Ts_...>&& adapter, Ts_... comparator);
 
-public:
-    using Elem = typename AdaptElem::element_type;
+    public:
+        using Elem = typename AdaptElem::element_type;
 
-    ThreadsafeSTLAdapter(const ThreadsafeSTLAdapter& rhs);
-    ThreadsafeSTLAdapter(ThreadsafeSTLAdapter&& rhs);
-    ThreadsafeSTLAdapter& operator=(const ThreadsafeSTLAdapter& rhs);
-    ThreadsafeSTLAdapter& operator=(ThreadsafeSTLAdapter&& rhs);
+        ThreadSafeSTLAdapter(const ThreadSafeSTLAdapter& rhs);
+        ThreadSafeSTLAdapter(ThreadSafeSTLAdapter&& rhs);
+        ThreadSafeSTLAdapter& operator=(const ThreadSafeSTLAdapter& rhs);
+        ThreadSafeSTLAdapter& operator=(ThreadSafeSTLAdapter&& rhs);
+        ~ThreadSafeSTLAdapter() = default;
 
-    void push(Elem value);
-    void pushAndNotify(Elem value);
+        void push(Elem value);
+        void pushAndNotify(Elem value);
 
-    void waitAndPop(Elem& value);
-    std::shared_ptr<Elem> waitAndPop();
+        void waitAndPop(Elem& value);
+        std::shared_ptr<Elem> waitAndPop();
 
-    bool tryPop(Elem& value);
-    std::shared_ptr<Elem> tryPop();
+        bool tryPop(Elem& value);
+        std::shared_ptr<Elem> tryPop();
 
-    void pop(Elem& value);
-    std::shared_ptr<Elem> pop();
+        void pop(Elem& value);
+        std::shared_ptr<Elem> pop();
 
-    friend void swap<>(ThreadsafeSTLAdapter& lhs, ThreadsafeSTLAdapter& rhs);
-};
+        void swap(ThreadSafeSTLAdapter& rhs);
+    };
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
-ThreadsafeSTLAdapter(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&& adapter)
-    : m_adapter(std::move(adapter))
-{ }
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
+        ThreadSafeSTLAdapter(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&& adapter)
+        : m_adapter(std::move(adapter))
+    { }
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
-ThreadsafeSTLAdapter(const ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& rhs)
-{
-    std::lock_guard<std::mutex> lock(rhs.m_mutex);
-    m_adapter = rhs.m_adapter;
-}
-
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
-ThreadsafeSTLAdapter(ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&& rhs)
-{
-    std::lock_guard<std::mutex> lock(rhs.m_mutex);
-    m_adapter = std::move_if_noexcept(rhs.m_adapter);
-}
-
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
-operator=(const ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& rhs)
-{
-    if (this != &rhs)
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
+        ThreadSafeSTLAdapter(const ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& rhs)
     {
-        std::scoped_lock lock(m_mutex, rhs.m_mutex);
+        std::lock_guard<std::mutex> lock(rhs.m_mutex);
         m_adapter = rhs.m_adapter;
     }
-    return *this;
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
-operator=(ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&& rhs)
-{
-    if (this != &rhs)
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
+        ThreadSafeSTLAdapter(ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&& rhs)
     {
-        std::scoped_lock lock(m_mutex, rhs.m_mutex);
+        std::lock_guard<std::mutex> lock(rhs.m_mutex);
         m_adapter = std::move_if_noexcept(rhs.m_adapter);
     }
-    return *this;
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-void ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::push(Elem value)
-{
-    std::shared_ptr<Elem> item(std::make_shared<Elem>(std::move_if_noexcept(value)));
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&
+        ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
+        operator=(const ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>& rhs)
     {
+        if (this != &rhs)
+        {
+            std::scoped_lock lock(m_mutex, rhs.m_mutex);
+            m_adapter = rhs.m_adapter;
+        }
+        return *this;
+    }
+
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&
+        ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::
+        operator=(ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>&& rhs)
+    {
+        if (this != &rhs)
+        {
+            std::scoped_lock lock(m_mutex, rhs.m_mutex);
+            m_adapter = std::move_if_noexcept(rhs.m_adapter);
+        }
+        return *this;
+    }
+
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    void ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::push(Elem value)
+    {
+        std::shared_ptr<Elem> item(std::make_shared<Elem>(std::move_if_noexcept(value)));
         std::lock_guard<std::mutex> lock(m_mutex);
         m_adapter.push(std::move(item));
     }
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-void ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::pushAndNotify(Elem value)
-{
-    push(std::move_if_noexcept(value));
-    m_condVar.notify_one();
-}
-
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-void ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::waitAndPop(Elem& value)
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    m_condVar.wait(lock, [&] { return !m_adapter.empty(); });
-    value = std::move_if_noexcept(*getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
-    m_adapter.pop();
-}
-
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-std::shared_ptr<typename ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::Elem>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::waitAndPop()
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    m_condVar.wait(lock, [&] { return !m_adapter.empty(); });
-    std::shared_ptr<Elem> res = std::move(getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
-    m_adapter.pop();
-    return res;
-}
-
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-bool ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::tryPop(Elem& value)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_adapter.empty())
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    void ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::pushAndNotify(Elem value)
     {
-        return false;
+        push(std::move_if_noexcept(value));
+        m_condVar.notify_one();
     }
-    value = std::move_if_noexcept(*getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
-    m_adapter.pop();
-    return true;
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-std::shared_ptr<typename ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::Elem>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::tryPop()
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_adapter.empty())
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    void ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::waitAndPop(Elem& value)
     {
-        return std::shared_ptr<Elem>{};
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_condVar.wait(lock, [&] { return !m_adapter.empty(); });
+        value = std::move_if_noexcept(*getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
+        m_adapter.pop();
     }
-    std::shared_ptr<Elem> res = std::move(getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
-    m_adapter.pop();
-    return res;
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-void ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::pop(Elem& value)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_adapter.empty())
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    std::shared_ptr<typename ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::Elem>
+        ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::waitAndPop()
     {
-        throw EmptyAdapter{};
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_condVar.wait(lock, [&] { return !m_adapter.empty(); });
+        std::shared_ptr<Elem> res = std::move(getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
+        m_adapter.pop();
+        return res;
     }
-    value = std::move_if_noexcept(*getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
-    m_adapter.pop();
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-std::shared_ptr<typename ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::Elem>
-ThreadsafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::pop()
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_adapter.empty())
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    bool ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::tryPop(Elem& value)
     {
-        throw EmptyAdapter{};
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_adapter.empty())
+        {
+            return false;
+        }
+        value = std::move_if_noexcept(*getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
+        m_adapter.pop();
+        return true;
     }
-    std::shared_ptr<Elem> res = std::move(getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
-    m_adapter.pop();
-    return res;
-}
 
-template<typename Comparator>
-class CustomComparator
-{
-private:
-    Comparator m_comparator;
-
-public:
-    explicit CustomComparator(Comparator comparator)
-        : m_comparator(std::move(comparator))
-    { }
-
-    template<typename Elem>
-    bool operator()(const std::shared_ptr<Elem>& x, const std::shared_ptr<Elem>& y) const noexcept(noexcept(m_comparator(*x, *y)))
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    std::shared_ptr<typename ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::Elem>
+        ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::tryPop()
     {
-        return m_comparator(*x, *y);
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_adapter.empty())
+        {
+            return std::shared_ptr<Elem>{};
+        }
+        std::shared_ptr<Elem> res = std::move(getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
+        m_adapter.pop();
+        return res;
     }
-};
 
-// This function uses a hack to get a reference to the adapter's internal container
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-const Cont<ContElem, Alloc<AllocElem>>& getProtectedContainer(const Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>& adapter)
-{
-    struct OpenAdapter : Adapt<AdaptElem, Cont<ContElem, Alloc<AdaptElem>>, Ts...>
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    void ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::pop(Elem& value)
     {
-        using Adapt<AdaptElem, Cont<ContElem, Alloc<AdaptElem>>, Ts...>::c;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_adapter.empty())
+        {
+            throw EmptyAdapter{};
+        }
+        value = std::move_if_noexcept(*getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
+        m_adapter.pop();
+    }
+
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    std::shared_ptr<typename ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::Elem>
+        ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::pop()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_adapter.empty())
+        {
+            throw EmptyAdapter{};
+        }
+        std::shared_ptr<Elem> res = std::move(getCurrent<Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>>(m_adapter));
+        m_adapter.pop();
+        return res;
+    }
+
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    void ThreadSafeSTLAdapter<Adapt, AdaptElem, Cont, ContElem, Alloc, AllocElem, Ts...>::swap(ThreadSafeSTLAdapter& rhs)
+    {
+        if (this != &rhs)
+        {
+            std::scoped_lock lock(m_mutex, rhs.m_mutex);
+            std::swap(m_adapter, rhs.m_adapter);
+        }
+    }
+
+    template<typename Comparator>
+    class CustomComparator
+    {
+    private:
+        Comparator m_comparator;
+
+    public:
+        explicit CustomComparator(Comparator comparator)
+            : m_comparator(std::move(comparator))
+        { }
+        CustomComparator(const CustomComparator&) = default;
+        CustomComparator(CustomComparator&&) = default;
+        CustomComparator& operator=(const CustomComparator&) = default;
+        CustomComparator& operator=(CustomComparator&) = default;
+        ~CustomComparator() = default;
+
+        template<typename Elem>
+        [[nodiscard]] bool operator()(const std::shared_ptr<Elem>& x, const std::shared_ptr<Elem>& y) const noexcept(noexcept(m_comparator(*x, *y)))
+        {
+            return m_comparator(*x, *y);
+        }
     };
-    return static_cast<const OpenAdapter&>(adapter).c;
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-Cont<ContElem, Alloc<AllocElem>>& getProtectedContainer(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>& adapter)
-{
-    return const_cast<Cont<ContElem, Alloc<AllocElem>>&>(
-           getProtectedContainer(static_cast<const Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&>(adapter)));
-}
+    // This function uses a hack to get a reference to the adapter's internal container.
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    [[nodiscard]] const Cont<ContElem, Alloc<AllocElem>>& getProtectedContainer(const Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>& adapter)
+    {
+        struct OpenAdapter : Adapt<AdaptElem, Cont<ContElem, Alloc<AdaptElem>>, Ts...>
+        {
+            using Adapt<AdaptElem, Cont<ContElem, Alloc<AdaptElem>>, Ts...>::c;
+        };
+        return static_cast<const OpenAdapter&>(adapter).c;
+    }
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-auto createThreadsafeSTLAdapterFrom(const Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>& adapter, Ts... comparator)
-{
-    auto& underlyingContainer = getProtectedContainer(adapter);
-    if constexpr(sizeof...(Ts) == 1)
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    [[nodiscard]] Cont<ContElem, Alloc<AllocElem>>& getProtectedContainer(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>& adapter)
     {
-        // std::priority_queue
-        Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>, CustomComparator<Ts...>>
-        adapterWithSharedPtrElements{ CustomComparator{std::move(comparator...)} };
-        auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
-        std::transform(underlyingContainer.cbegin(), underlyingContainer.cend(), std::back_inserter(underlyingSharedPtrContainer),
-                       [](auto& item) { return std::make_shared<AdaptElem>(item); });
-        return ThreadsafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
+        return const_cast<Cont<ContElem, Alloc<AllocElem>>&>(
+            getProtectedContainer(static_cast<const Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&>(adapter)));
     }
-    if constexpr(sizeof...(Ts) == 0)
-    {
-        // std::stack / std::queue
-        Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>>
-        adapterWithSharedPtrElements{ };
-        auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
-        std::transform(underlyingContainer.cbegin(), underlyingContainer.cend(), std::back_inserter(underlyingSharedPtrContainer),
-                       [](auto& item) { return std::make_shared<AdaptElem>(item); });
-        return ThreadsafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
-    }
-}
 
-template<template<typename...> typename Adapt,
-         typename AdaptElem, template<typename...> typename Cont,
-                  typename ContElem, template<typename> typename Alloc,
-                             typename AllocElem, typename... Ts>
-auto createThreadsafeSTLAdapterFrom(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&& adapter, Ts... comparator)
-{
-    auto& underlyingContainer = getProtectedContainer(adapter);
-    if constexpr(sizeof...(Ts) == 1)
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    [[nodiscard]] auto createThreadSafeSTLAdapterFrom(const Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>& adapter, Ts... comparator)
     {
-        // std::priority_queue
-        Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>, CustomComparator<Ts...>>
-        adapterWithSharedPtrElements{ CustomComparator{std::move(comparator...)} };
-        auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
-        std::transform(underlyingContainer.begin(), underlyingContainer.end(), std::back_inserter(underlyingSharedPtrContainer),
-                       [](auto& item) { return std::make_shared<AdaptElem>(std::move(item)); });
-        return ThreadsafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
+        auto& underlyingContainer = getProtectedContainer(adapter);
+        if constexpr (sizeof...(Ts) == 1)
+        {
+            // std::priority_queue
+            Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>, CustomComparator<Ts...>>
+                adapterWithSharedPtrElements{ CustomComparator{std::move(comparator...)} };
+            auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
+            std::transform(underlyingContainer.cbegin(), underlyingContainer.cend(), std::back_inserter(underlyingSharedPtrContainer),
+                [](auto& item) { return std::make_shared<AdaptElem>(item); });
+            return ThreadSafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
+        }
+        if constexpr (sizeof...(Ts) == 0)
+        {
+            // std::stack / std::queue
+            Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>>
+                adapterWithSharedPtrElements{ };
+            auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
+            std::transform(underlyingContainer.cbegin(), underlyingContainer.cend(), std::back_inserter(underlyingSharedPtrContainer),
+                [](auto& item) { return std::make_shared<AdaptElem>(item); });
+            return ThreadSafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
+        }
     }
-    if constexpr(sizeof...(Ts) == 0)
-    {
-        // std::stack / std::queue
-        Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>>
-        adapterWithSharedPtrElements{ };
-        auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
-        std::transform(underlyingContainer.begin(), underlyingContainer.end(), std::back_inserter(underlyingSharedPtrContainer),
-                       [](auto& item) { return std::make_shared<AdaptElem>(std::move(item)); });
-        return ThreadsafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
-    }
-}
 
-} // namespace concurrency
+    template<template<typename...> typename Adapt,
+        typename AdaptElem, template<typename...> typename Cont,
+        typename ContElem, template<typename> typename Alloc,
+        typename AllocElem, typename... Ts>
+    [[nodiscard]] auto createThreadSafeSTLAdapterFrom(Adapt<AdaptElem, Cont<ContElem, Alloc<AllocElem>>, Ts...>&& adapter, Ts... comparator)
+    {
+        auto& underlyingContainer = getProtectedContainer(adapter);
+        if constexpr (sizeof...(Ts) == 1)
+        {
+            // std::priority_queue
+            Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>, CustomComparator<Ts...>>
+                adapterWithSharedPtrElements{ CustomComparator{std::move(comparator...)} };
+            auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
+            std::transform(underlyingContainer.begin(), underlyingContainer.end(), std::back_inserter(underlyingSharedPtrContainer),
+                [](auto& item) { return std::make_shared<AdaptElem>(std::move(item)); });
+            return ThreadSafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
+        }
+        if constexpr (sizeof...(Ts) == 0)
+        {
+            // std::stack / std::queue
+            Adapt<std::shared_ptr<AdaptElem>, Cont<std::shared_ptr<ContElem>, Alloc<std::shared_ptr<AllocElem>>>>
+                adapterWithSharedPtrElements{ };
+            auto& underlyingSharedPtrContainer = getProtectedContainer(adapterWithSharedPtrElements);
+            std::transform(underlyingContainer.begin(), underlyingContainer.end(), std::back_inserter(underlyingSharedPtrContainer),
+                [](auto& item) { return std::make_shared<AdaptElem>(std::move(item)); });
+            return ThreadSafeSTLAdapter{ std::move(adapterWithSharedPtrElements) };
+        }
+    }
+
+} // namespace mt
 
 #endif
